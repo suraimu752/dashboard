@@ -30,11 +30,27 @@
     mozRequestFullScreen?: () => Promise<void>;
     msRequestFullscreen?: () => Promise<void>;
   }
+
+  // Screen Wake Lock API type
+  interface NavigatorWithWakeLock extends Navigator {
+    wakeLock?: {
+      request(type?: 'screen'): Promise<WakeLockSentinel>;
+    };
+  }
+
+  interface WakeLockSentinel {
+    released: boolean;
+    type: 'screen';
+    release(): Promise<void>;
+    addEventListener(type: 'release', listener: () => void): void;
+    removeEventListener(type: 'release', listener: () => void): void;
+  }
   
   let selectedSensor: SensorType = $state('temp');
   let isFullscreen = $state(false);
   let containerElement: HTMLDivElement;
   let fullscreenScale = $state(1);
+  let wakeLock: WakeLockSentinel | null = $state(null);
 
   const CONTENT_WIDTH = 2160;
   const CONTENT_HEIGHT = 1080;
@@ -56,9 +72,59 @@
     document.documentElement.style.fontSize = `${rootFontSize}px`;
   }
 
+  // Screen Wake Lock API functions
+  async function requestWakeLock() {
+    const nav = navigator as NavigatorWithWakeLock;
+    if (!nav.wakeLock) {
+      console.warn('Screen Wake Lock API is not supported in this browser.');
+      return;
+    }
+
+    try {
+      wakeLock = await nav.wakeLock.request('screen');
+      console.log('Screen wake lock acquired');
+      
+      // Handle wake lock release (e.g., when user switches tabs)
+      wakeLock.addEventListener('release', () => {
+        console.log('Screen wake lock released');
+        wakeLock = null;
+      });
+    } catch (error) {
+      console.error('Error acquiring wake lock:', error);
+      wakeLock = null;
+    }
+  }
+
+  async function releaseWakeLock() {
+    if (wakeLock && !wakeLock.released) {
+      try {
+        await wakeLock.release();
+        wakeLock = null;
+        console.log('Screen wake lock released');
+      } catch (error) {
+        console.error('Error releasing wake lock:', error);
+      }
+    }
+  }
+
+  // Handle visibility change to reacquire wake lock when page becomes visible
+  function handleVisibilityChange() {
+    if (document.visibilityState === 'visible' && !wakeLock) {
+      requestWakeLock();
+    } else if (document.visibilityState === 'hidden' && wakeLock) {
+      releaseWakeLock();
+    }
+  }
+
   onMount(() => {
     startSensorPolling();
     startWeatherPolling();
+    
+    // Request wake lock on mount
+    requestWakeLock();
+    
+    // Listen for visibility changes
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     
     // Calculate scale for fullscreen to fit content
     function calculateFullscreenScale() {
@@ -141,6 +207,10 @@
       document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
       document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
       window.removeEventListener('resize', handleResize);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      
+      // Release wake lock on unmount
+      releaseWakeLock();
     };
   });
 
