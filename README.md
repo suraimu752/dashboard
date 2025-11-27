@@ -48,7 +48,7 @@ npm run dev
 npm run dev -- --open
 ```
 
-開発サーバーは通常 `http://localhost:5173` で起動します。
+開発サーバーは通常 `https://localhost:5173` で起動します（HTTPS有効）。
 
 ## ビルド
 
@@ -63,6 +63,28 @@ npm run build
 ```sh
 npm run preview
 ```
+
+## 本番環境
+
+本番環境でHTTPSサーバーを起動します：
+
+```sh
+# 1. ビルド
+npm run build
+
+# 2. サーバー起動
+npm start
+```
+
+サーバーは `https://0.0.0.0:3000` で起動します（ポートは `PORT` 環境変数で変更可能）。
+
+### HTTPS証明書
+
+本番環境では以下の証明書ファイルが必要です：
+- 秘密鍵: `/home/pi/192.168.116.60-key.pem`
+- 証明書: `/home/pi/192.168.116.60.pem`
+
+証明書ファイルが存在しない場合、サーバーは起動しません。
 
 ## 型チェック
 
@@ -95,7 +117,8 @@ dashboard/
 │   ├── routes/             # ルート
 │   │   └── +page.svelte    # メインページ
 │   ├── app.css             # グローバルスタイル
-│   └── app.html            # HTMLテンプレート
+│   ├── app.html            # HTMLテンプレート
+│   └── server.ts           # 本番用HTTPSサーバー
 ├── static/                 # 静的ファイル
 ├── build/                  # ビルド出力
 └── package.json
