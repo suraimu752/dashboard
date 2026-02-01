@@ -123,28 +123,39 @@
     // Request wake lock on mount
     requestWakeLock();
     
+    // App launch with ?fullscreen=1: apply fullscreen state without Fullscreen API (e.g. Android WebView)
+    const params = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '');
+    if (params.get('fullscreen') === '1') {
+      isFullscreen = true;
+      document.documentElement.style.width = '100vw';
+      document.documentElement.style.height = '100vh';
+      document.body.style.width = '100vw';
+      document.body.style.height = '100vh';
+    }
+    
     // Listen for visibility changes
     document.addEventListener('visibilitychange', handleVisibilityChange);
     
-    // Calculate scale for fullscreen to fit content
+    // Calculate scale for fullscreen to fit content (with small margin so nothing is cut off)
+    const FIT_MARGIN = 0.98; // scale down slightly to avoid edge cutoff
     function calculateFullscreenScale() {
       if (!isFullscreen) {
         fullscreenScale = 1;
         return;
       }
-      
-      const screenWidth = window.innerWidth || document.documentElement.clientWidth || 2160;
-      const screenHeight = window.innerHeight || document.documentElement.clientHeight || 1080;
-      
+      const vv = typeof window !== 'undefined' && window.visualViewport && typeof window.visualViewport.width === 'number'
+        ? window.visualViewport
+        : null;
+      const screenWidth = (vv ? vv.width : window.innerWidth ?? document.documentElement.clientWidth) || CONTENT_WIDTH;
+      const screenHeight = (vv ? vv.height : window.innerHeight ?? document.documentElement.clientHeight) || CONTENT_HEIGHT;
       if (screenWidth <= 0 || screenHeight <= 0) {
         fullscreenScale = 1;
         return;
       }
-      
       const scaleX = screenWidth / CONTENT_WIDTH;
       const scaleY = screenHeight / CONTENT_HEIGHT;
-      const calculatedScale = Math.max(0.1, Math.min(1, Math.min(scaleX, scaleY)));
-      
+      const fitScale = Math.min(scaleX, scaleY) * FIT_MARGIN;
+      const calculatedScale = Math.max(0.1, Math.min(1, fitScale));
       fullscreenScale = isNaN(calculatedScale) || calculatedScale <= 0 ? 1 : calculatedScale;
     }
 
@@ -195,6 +206,18 @@
     // Initial font size update
     updateRootFontSize();
     
+    // If we started with fullscreen=1, run scale calculation after layout (WebView may report size late)
+    let resizeObs: ResizeObserver | null = null;
+    if (params.get('fullscreen') === '1') {
+      [100, 300, 500, 800, 1200].forEach((ms) => setTimeout(calculateFullscreenScale, ms));
+      resizeObs = new ResizeObserver(() => calculateFullscreenScale());
+      resizeObs.observe(document.documentElement);
+      if (typeof window !== 'undefined' && window.visualViewport) {
+        window.visualViewport.addEventListener('resize', calculateFullscreenScale);
+        window.visualViewport.addEventListener('scroll', calculateFullscreenScale);
+      }
+    }
+    
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
     document.addEventListener('mozfullscreenchange', handleFullscreenChange);
@@ -202,14 +225,17 @@
     window.addEventListener('resize', handleResize);
     
     return () => {
+      resizeObs?.disconnect();
+      if (typeof window !== 'undefined' && window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', calculateFullscreenScale);
+        window.visualViewport.removeEventListener('scroll', calculateFullscreenScale);
+      }
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       document.removeEventListener('mozfullscreenchange', handleFullscreenChange);
       document.removeEventListener('MSFullscreenChange', handleFullscreenChange);
       window.removeEventListener('resize', handleResize);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      
-      // Release wake lock on unmount
       releaseWakeLock();
     };
   });
@@ -249,12 +275,42 @@
   });
 
   async function toggleFullscreen() {
+    const doc = document.documentElement as HTMLElementWithFullscreen;
+    const documentWithFullscreen = document as DocumentWithFullscreen;
+    const inRealFullscreen = !!document.fullscreenElement || !!doc.webkitFullscreenElement || !!doc.mozFullScreenElement || !!doc.msFullscreenElement;
+    const embeddedFullscreen = new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('fullscreen') === '1';
+
+    // When launched with ?fullscreen=1 (e.g. Android app), toggle local state and styles
+    if (embeddedFullscreen && !inRealFullscreen) {
+      isFullscreen = !isFullscreen;
+      if (isFullscreen) {
+        document.documentElement.style.width = '100vw';
+        document.documentElement.style.height = '100vh';
+        document.body.style.width = '100vw';
+        document.body.style.height = '100vh';
+        setTimeout(() => {
+          if (containerElement && typeof window !== 'undefined') {
+            const vv = window.visualViewport;
+            const screenWidth = vv?.width ?? window.innerWidth ?? document.documentElement.clientWidth ?? CONTENT_WIDTH;
+            const screenHeight = vv?.height ?? window.innerHeight ?? document.documentElement.clientHeight ?? CONTENT_HEIGHT;
+            const scaleX = screenWidth / CONTENT_WIDTH;
+            const scaleY = screenHeight / CONTENT_HEIGHT;
+            const fitScale = Math.min(scaleX, scaleY) * 0.98;
+            fullscreenScale = Math.max(0.1, Math.min(1, fitScale));
+          }
+        }, 50);
+      } else {
+        document.documentElement.style.width = '2160px';
+        document.documentElement.style.height = '1080px';
+        document.body.style.width = '2160px';
+        document.body.style.height = '1080px';
+        fullscreenScale = 1;
+      }
+      return;
+    }
+
     try {
-      const doc = document.documentElement as HTMLElementWithFullscreen;
-      const documentWithFullscreen = document as DocumentWithFullscreen;
-      
-      if (!document.fullscreenElement && !doc.webkitFullscreenElement && !doc.mozFullScreenElement && !doc.msFullscreenElement) {
-        // Try standard API first
+      if (!inRealFullscreen) {
         if (doc.requestFullscreen) {
           await doc.requestFullscreen();
         } else if (doc.webkitRequestFullscreen) {
@@ -265,7 +321,6 @@
           await doc.msRequestFullscreen();
         }
       } else {
-        // Exit fullscreen
         if (document.exitFullscreen) {
           await document.exitFullscreen();
         } else if (documentWithFullscreen.webkitExitFullscreen) {

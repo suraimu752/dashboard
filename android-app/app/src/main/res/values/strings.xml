@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ダッシュボード</string>
+    <!-- 同じネットワークのPiのIPに合わせて変更してください -->
+    <string name="default_dashboard_url">https://192.168.116.60:3000</string>
+    <string name="load_error">読み込みエラー: %1$s</string>
+    <string name="url_not_configured">ダッシュボードのURLが設定されていません。strings.xmlのdefault_dashboard_urlを編集するか、設定でURLを指定してください。</string>
+    <string name="ssl_error">接続先の証明書を信頼できません（ダッシュボード以外のサイトでは表示しません）。</string>
+</resources>

@@ -100,10 +100,18 @@ npm run check
 npm run check:watch
 ```
 
+## Android アプリ
+
+このダッシュボードを表示する Android アプリ（WebView）を同梱しています。
+
+- フォルダ: `android-app/`
+- ビルド・使い方: `android-app/README.md` を参照してください。
+
 ## プロジェクト構造
 
 ```
 dashboard/
+├── android-app/          # Android アプリ（WebView）
 ├── src/
 │   ├── lib/
 │   │   ├── components/     # Svelteコンポーネント
