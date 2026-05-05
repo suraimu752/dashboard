@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { parseTimestampToMs, roundDateToMinute } from '$lib/utils/timestamp';
 
 export interface SensorDataNow {
   temp: number;
@@ -19,74 +20,28 @@ export interface SensorDataHistory {
   co2_concentrations: HistoryPoint[];
 }
 
-function createSensorStore() {
-  const { subscribe, set, update } = writable<{
-    now: SensorDataNow | null;
-    history: SensorDataHistory | null;
-    loading: boolean;
-    error: string | null;
-  }>({
-    now: null,
-    history: null,
-    loading: false,
-    error: null
-  });
-
-  return {
-    subscribe,
-    fetchNow: async () => {
-      try {
-        const res = await fetch('/api/sensors/now');
-        if (res.ok) {
-          const data = await res.json();
-          update(s => ({ ...s, now: data }));
-        } else {
-            console.error('Failed to fetch current sensor data');
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    fetchHistory: async () => {
-      try {
-        const res = await fetch('/api/sensors/history');
-        if (res.ok) {
-          const data = await res.json();
-          update(s => ({ ...s, history: data }));
-        } else {
-             console.error('Failed to fetch historical sensor data');
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    },
-    startPolling: (intervalMs = 60000) => {
-        // Initial fetch
-        const store = createSensorStore(); // This line is wrong, I am inside the function.
-        // I need to call the fetch functions defined above.
-        // But I can't access them easily if I return an object.
-        // Let's refactor to just return the store and separate functions or attach them.
-    }
-  };
-}
-
-// Refactored store
-const initialState = {
-    now: null as SensorDataNow | null,
-    history: null as SensorDataHistory | null,
-    loading: false,
-    error: null as string | null
+type SensorStoreState = {
+	now: SensorDataNow | null;
+	history: SensorDataHistory | null;
+	loading: boolean;
+	error: string | null;
 };
 
-export const sensorStore = writable(initialState);
+const initialState: SensorStoreState = {
+	now: null,
+	history: null,
+	loading: false,
+	error: null
+};
+
+export const sensorStore = writable<SensorStoreState>(initialState);
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 function pruneLast24h(points: HistoryPoint[], nowMs = Date.now()): HistoryPoint[] {
     const cutoff = nowMs - ONE_DAY_MS;
-    // timestamps are ISO or "YYYY-MM-DD HH:mm:ss" (normalized by Date.parse after replacing space)
     return points.filter((p) => {
-        const t = Date.parse(p.timestamp.includes('T') ? p.timestamp : p.timestamp.replace(' ', 'T'));
+        const t = parseTimestampToMs(p.timestamp);
         return Number.isFinite(t) && t >= cutoff;
     });
 }
@@ -94,8 +49,7 @@ function pruneLast24h(points: HistoryPoint[], nowMs = Date.now()): HistoryPoint[
 function appendPoint(points: HistoryPoint[], point: HistoryPoint): HistoryPoint[] {
     const next = [...points, point];
     // keep ascending order; array is small (<= 1440 minute points + DB points)
-    next.sort((a, b) => Date.parse(a.timestamp.includes('T') ? a.timestamp : a.timestamp.replace(' ', 'T')) -
-        Date.parse(b.timestamp.includes('T') ? b.timestamp : b.timestamp.replace(' ', 'T')));
+    next.sort((a, b) => parseTimestampToMs(a.timestamp) - parseTimestampToMs(b.timestamp));
     return next;
 }
 
@@ -107,9 +61,7 @@ export async function fetchSensorNow() {
             const data = await res.json();
             console.log('Sensor now data:', data);
             // Round timestamp to the minute to keep time labels/grids stable.
-            const now = new Date();
-            now.setSeconds(0, 0);
-            const nowIso = now.toISOString();
+            const nowIso = roundDateToMinute(new Date()).toISOString();
             sensorStore.update((s) => {
                 const next = { ...s, now: data };
                 // Also densify chart data every minute using in-memory "now" values,

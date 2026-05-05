@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { format } from 'date-fns';
+  import { parseTimestampToMs } from '$lib/utils/timestamp';
   import {
     Chart,
     Title,
@@ -56,21 +57,13 @@
   let midnightIdxSet = new Set<number>();
   
   const color = $derived(SENSOR_COLORS[type as keyof typeof SENSOR_COLORS]);
-
-  function parseTimestamp(ts: string): Date {
-    // Memory points are ISO (e.g. 2026-05-05T10:01:00.000Z)
-    // DB points may be "YYYY-MM-DD HH:mm:ss" (space-separated).
-    // Normalize to ISO-like without timezone; JS treats it as local time.
-    const normalized = ts.includes('T') ? ts : ts.replace(' ', 'T');
-    const d = new Date(normalized);
-    return Number.isNaN(d.getTime()) ? new Date(0) : d;
-  }
+  const FOUR_HOURS_MS = 4 * 60 * 60 * 1000;
 
   function formatLabel(ts: string) {
-    return format(parseTimestamp(ts), 'M/d HH:mm');
+    return format(new Date(parseTimestampToMs(ts)), 'M/d HH:mm');
   }
 
-  function closestIndexByTime(targetMs: number) {
+  function closestIndexByTime(targetMs: number): number | null {
     if (labelTimesMs.length === 0) return null;
 
     let lo = 0;
@@ -104,10 +97,10 @@
 
     // Find first 4h boundary >= start.
     let t = t0.getTime();
-    while (t + 4 * 60 * 60 * 1000 <= startMs) t += 4 * 60 * 60 * 1000;
-    while (t < startMs) t += 4 * 60 * 60 * 1000;
+    while (t + FOUR_HOURS_MS <= startMs) t += FOUR_HOURS_MS;
+    while (t < startMs) t += FOUR_HOURS_MS;
 
-    for (; t <= endMs; t += 4 * 60 * 60 * 1000) {
+    for (; t <= endMs; t += FOUR_HOURS_MS) {
       const idx = closestIndexByTime(t);
       if (idx === null) continue;
       boundaryIdxSet.add(idx);
@@ -116,18 +109,43 @@
     }
   }
 
-  function getCategoryTickIndex(ctx: unknown): number | null {
-    const anyCtx = ctx as { index?: unknown; tick?: { value?: unknown } };
-    if (typeof anyCtx.index === 'number') return anyCtx.index;
-    const v = anyCtx.tick?.value;
-    // For CategoryScale, tick.value is typically the label index (number).
-    if (typeof v === 'number') return v;
-    return null;
+  function formatBoundaryTickLabel(idx: number) {
+    const ms = labelTimesMs[idx];
+    return midnightIdxSet.has(idx)
+      ? `${format(new Date(ms), 'M/d')} 0:00`
+      : format(new Date(ms), 'H:mm');
+  }
+
+  function drawBoundaryLinesBehindDatasets(chart: Chart) {
+    const xScale = chart.scales.x;
+    if (!xScale) return;
+    const { ctx, chartArea } = chart;
+
+    ctx.save();
+
+    const indices = Array.from(boundaryIdxSet.values()).sort((a, b) => a - b);
+    for (const idx of indices) {
+      const x = xScale.getPixelForTick(idx);
+      // Avoid drawing on top of the y-axis border at the very left edge.
+      if (x <= chartArea.left + 1) continue;
+
+      const isMidnightLine = midnightIdxSet.has(idx);
+      ctx.strokeStyle = isMidnightLine ? '#64748b' : '#334155';
+      ctx.lineWidth = isMidnightLine ? 2 : 1;
+
+      // Align to pixel grid for crisp lines
+      const xx = Math.round(x) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(xx, chartArea.top);
+      ctx.lineTo(xx, chartArea.bottom);
+      ctx.stroke();
+    }
+
+    ctx.restore();
   }
 
   $effect(() => {
     if (chart && history) {
-      console.log('Effect triggered:', label, 'History items:', history.temperatures?.length);
       updateChart();
     }
   });
@@ -163,11 +181,9 @@
 
   function updateChart() {
     if (!history || !chart) return;
-    
-    console.log('Updating chart:', label, color, history.temperatures.length);
 
     // Keep a parallel ms array for tick/grid calculations.
-    labelTimesMs = history.temperatures.map((d: HistoryDataPoint) => parseTimestamp(d.timestamp).getTime());
+    labelTimesMs = history.temperatures.map((d: HistoryDataPoint) => parseTimestampToMs(d.timestamp));
     computeBoundarySets();
     const labels = history.temperatures.map((d: HistoryDataPoint) => formatLabel(d.timestamp));
     const data = getData(type, history);
@@ -260,10 +276,7 @@
                           const idx = tickIndex;
                           if (!labelTimesMs[idx]) return '';
                           if (!boundaryIdxSet.has(idx)) return '';
-                          const ms = labelTimesMs[idx];
-                          return midnightIdxSet.has(idx)
-                            ? `${format(new Date(ms), 'M/d')} 0:00`
-                            : format(new Date(ms), 'H:mm');
+                          return formatBoundaryTickLabel(idx);
                         },
                         font: {
                             size: 30
@@ -293,32 +306,7 @@
             id: 'fixed-4h-grid-lines',
             // Draw behind dataset lines
             beforeDatasetsDraw(chart) {
-              const xScale = chart.scales.x;
-              if (!xScale) return;
-              const { ctx, chartArea } = chart;
-
-              ctx.save();
-              ctx.beginPath();
-
-              // Draw each boundary line explicitly (more reliable than scriptable grid callbacks).
-              const indices = Array.from(boundaryIdxSet.values()).sort((a, b) => a - b);
-              for (const idx of indices) {
-                const x = xScale.getPixelForTick(idx);
-                // Avoid drawing on top of the y-axis border at the very left edge.
-                if (x <= chartArea.left + 1) continue;
-                const isMidnightLine = midnightIdxSet.has(idx);
-                ctx.strokeStyle = isMidnightLine ? '#64748b' : '#334155';
-                ctx.lineWidth = isMidnightLine ? 2 : 1;
-
-                // Align to pixel grid for crisp lines
-                const xx = Math.round(x) + 0.5;
-                ctx.beginPath();
-                ctx.moveTo(xx, chartArea.top);
-                ctx.lineTo(xx, chartArea.bottom);
-                ctx.stroke();
-              }
-
-              ctx.restore();
+              drawBoundaryLinesBehindDatasets(chart);
             }
           }
         ]
