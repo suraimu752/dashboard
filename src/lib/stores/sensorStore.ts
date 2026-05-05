@@ -80,6 +80,25 @@ const initialState = {
 
 export const sensorStore = writable(initialState);
 
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+function pruneLast24h(points: HistoryPoint[], nowMs = Date.now()): HistoryPoint[] {
+    const cutoff = nowMs - ONE_DAY_MS;
+    // timestamps are ISO or "YYYY-MM-DD HH:mm:ss" (normalized by Date.parse after replacing space)
+    return points.filter((p) => {
+        const t = Date.parse(p.timestamp.includes('T') ? p.timestamp : p.timestamp.replace(' ', 'T'));
+        return Number.isFinite(t) && t >= cutoff;
+    });
+}
+
+function appendPoint(points: HistoryPoint[], point: HistoryPoint): HistoryPoint[] {
+    const next = [...points, point];
+    // keep ascending order; array is small (<= 1440 minute points + DB points)
+    next.sort((a, b) => Date.parse(a.timestamp.includes('T') ? a.timestamp : a.timestamp.replace(' ', 'T')) -
+        Date.parse(b.timestamp.includes('T') ? b.timestamp : b.timestamp.replace(' ', 'T')));
+    return next;
+}
+
 export async function fetchSensorNow() {
     try {
         console.log('Fetching sensor now...');
@@ -87,7 +106,29 @@ export async function fetchSensorNow() {
         if (res.ok) {
             const data = await res.json();
             console.log('Sensor now data:', data);
-            sensorStore.update(s => ({ ...s, now: data }));
+            // Round timestamp to the minute to keep time labels/grids stable.
+            const now = new Date();
+            now.setSeconds(0, 0);
+            const nowIso = now.toISOString();
+            sensorStore.update((s) => {
+                const next = { ...s, now: data };
+                // Also densify chart data every minute using in-memory "now" values,
+                // so the graph updates immediately without waiting for history polling.
+                if (next.history) {
+                    const tPoint: HistoryPoint = { timestamp: nowIso, value: data.temp };
+                    const hPoint: HistoryPoint = { timestamp: nowIso, value: data.humi };
+                    const pPoint: HistoryPoint = { timestamp: nowIso, value: data.press };
+                    const cPoint: HistoryPoint = { timestamp: nowIso, value: data.co2 };
+
+                    next.history = {
+                        temperatures: pruneLast24h(appendPoint(next.history.temperatures ?? [], tPoint)),
+                        humidities: pruneLast24h(appendPoint(next.history.humidities ?? [], hPoint)),
+                        pressures: pruneLast24h(appendPoint(next.history.pressures ?? [], pPoint)),
+                        co2_concentrations: pruneLast24h(appendPoint(next.history.co2_concentrations ?? [], cPoint))
+                    };
+                }
+                return next;
+            });
         } else {
             console.error('Failed to fetch sensor now:', res.status, res.statusText);
         }

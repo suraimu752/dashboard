@@ -32,11 +32,11 @@
   }
 
   // Screen Wake Lock API type
-  interface NavigatorWithWakeLock extends Navigator {
+  type NavigatorWithWakeLock = Navigator & {
     wakeLock?: {
       request(type?: 'screen'): Promise<WakeLockSentinel>;
     };
-  }
+  };
 
   interface WakeLockSentinel {
     released: boolean;

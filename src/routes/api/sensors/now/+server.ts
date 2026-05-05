@@ -1,4 +1,5 @@
 import type { RequestHandler } from './$types';
+import { recordEnvironmentNow } from '$lib/server/environmentMemory';
 
 export const GET: RequestHandler = async ({ fetch }) => {
   try {
@@ -7,6 +8,8 @@ export const GET: RequestHandler = async ({ fetch }) => {
       return new Response(JSON.stringify({ error: 'Failed to fetch data' }), { status: response.status });
     }
     const data = await response.json();
+    // Record to in-memory minute-resolution buffer for smoother graphs.
+    recordEnvironmentNow(data);
     return new Response(JSON.stringify(data), {
       headers: { 'Content-Type': 'application/json' }
     });

@@ -15,7 +15,7 @@
 
 <div class="relative h-full w-full flex items-center justify-center">
   <div class="absolute text-secondary font-bold z-10" style="top: 10px; left: 20px; font-size: 3rem;">
-    {format(now, 'MM/d EEE.')}
+    {format(now, 'M/d EEE.')}
   </div>
   <div class="font-bold tracking-wider text-primary" style="font-size: 10rem; color: var(--color-text-primary); font-variant-numeric: tabular-nums;">
     {format(now, 'HH:mm:ss')}
